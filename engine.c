@@ -1,12 +1,19 @@
 #include<stdio.h>
 #include<string.h>
+#include<stdlib.h>//for atoi() function
+#ifdef WIN64//for get time in ms function (cross platform service)
+    #include <windows.h>
+#else
+    # include <sys/time.h>
+#endif
+
 
 #define U64 unsigned long long
 
 
 #define emptyBoard "8/8/8/8/8/8/8/8 w - - "
 #define startPosition "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1 "
-#define trickyPosition "r3k2r/p11pqpb1/bn2pnp1/2pPN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1 "
+#define trickyPosition "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq -"
 #define killerPosition "rnbqkb1r/pp1p1pPp/8/2p1pP2/1P1P4/3P3P/P1P1P3/RNBQKBNR b KQkq e6 0 1"
 #define cmkPosition "r2q1rk1/ppp2ppp/2n1bn2/2b1p3/3pP3/3P1NPP/PPP1NPB1/R1BQ1RK1 b - - 0 9 "
 
@@ -1014,9 +1021,13 @@ static inline void addMove(moves * moveList, int move)
 
 void printMove(int move)
 {
+   if(getMovePromoted(move))
    printf("%s%s%c\n", squareToCoordinates[getMoveSource(move)],
                      squareToCoordinates[getMoveTarget(move)],
                      promotedPieces[getMovePromoted(move)]);
+   else
+     printf("%s%s \n",squareToCoordinates[getMoveSource(move)],
+                     squareToCoordinates[getMoveTarget(move)]);
 }
 
 void printMoveList(moves *moveList)
@@ -1060,6 +1071,174 @@ void printMoveList(moves *moveList)
         printf("\n\n    Total number of moves: %d\n\n", moveList->count);   
 
 
+}
+
+#define copyBoard()                                                 \
+   U64 bitboardsCopy[12], occupanciesCopy[3];                       \
+   int sideCopy, enpassantCopy, castleCopy;                         \
+   memcpy(bitboardsCopy,bitboards,96);                              \
+   memcpy(occupanciesCopy,occupancies,24);                          \
+   sideCopy = side, enpassantCopy = enpassant, castleCopy = castle; \
+   
+#define takeBack()                                                  \
+   memcpy(bitboards,bitboardsCopy,96);                              \
+   memcpy(occupancies,occupanciesCopy,24);                          \
+   side = sideCopy, enpassant = enpassantCopy, castle = castleCopy; \
+
+enum
+{
+   allMoves,onlyCaptures
+};
+
+/*
+                           castling   move     in      in
+                              right update     binary  decimal
+
+ king & rooks didn't move:     1111 & 1111  =  1111    15
+
+        white king  moved:     1111 & 1100  =  1100    12
+  white king's rook moved:     1111 & 1110  =  1110    14
+ white queen's rook moved:     1111 & 1101  =  1101    13
+     
+         black king moved:     1111 & 0011  =  1011    3
+  black king's rook moved:     1111 & 1011  =  1011    11
+ black queen's rook moved:     1111 & 0111  =  0111    7
+
+*/
+
+// castling rights update constants
+const int castlingRights[64] = {
+     7, 15, 15, 15,  3, 15, 15, 11,
+    15, 15, 15, 15, 15, 15, 15, 15,
+    15, 15, 15, 15, 15, 15, 15, 15,
+    15, 15, 15, 15, 15, 15, 15, 15,
+    15, 15, 15, 15, 15, 15, 15, 15,
+    15, 15, 15, 15, 15, 15, 15, 15,
+    15, 15, 15, 15, 15, 15, 15, 15,
+    13, 15, 15, 15, 12, 15, 15, 14
+};
+
+static inline int makeMove(int move,int moveFlag)
+{
+   if(moveFlag == allMoves)
+   {
+     copyBoard();
+     
+     int sourceSquare = getMoveSource(move);
+     int targetSquare = getMoveTarget(move);
+     int piece = getMovePiece(move);
+     int promotedPiece = getMovePromoted(move);
+     int capture = getMoveCapture(move);
+     int doublePush = getMoveDouble(move);
+     int enpass = getMoveEnpassant(move);
+     int castling = getMoveCastling(move);
+     
+     popBitStatus(bitboards[piece], sourceSquare);
+     setBitStatus(bitboards[piece], targetSquare);
+     
+     if(capture)
+     {
+       int startPiece, endPiece;
+       
+       if(side == white)
+       {
+         startPiece = p;
+         endPiece = k;
+       }
+       else
+       {
+         startPiece = P;
+         endPiece = K;
+       }
+       
+       for(int bbPiece = startPiece; bbPiece <= endPiece; bbPiece++)
+       {
+          if(getBitStatus(bitboards[bbPiece], targetSquare))
+          {
+            popBitStatus(bitboards[bbPiece],targetSquare);
+            break;
+          }
+       }
+       
+     }
+     if(promotedPiece)
+     {
+       popBitStatus(bitboards[(side == white) ? P : p],targetSquare);
+       
+       setBitStatus(bitboards[promotedPiece], targetSquare);
+     }
+     
+     if(enpass)
+     {
+       (side == white) ? popBitStatus(bitboards[p], targetSquare + 8) : popBitStatus(bitboards[P], targetSquare - 8);
+     }
+     enpassant = noSq;
+   
+   
+   if(doublePush)
+   {
+     (side == white) ? (enpassant = targetSquare + 8) : (enpassant = targetSquare - 8);
+   }
+   if(castling)
+   {
+     switch(targetSquare)
+     {
+       case (g1):
+          popBitStatus(bitboards[R], h1);
+          setBitStatus(bitboards[R], f1);
+          break;
+       
+       case (c1):
+          popBitStatus(bitboards[R], a1);
+          setBitStatus(bitboards[R],d1);
+          break;
+          
+       case (g8):
+          popBitStatus(bitboards[r],h8);
+          setBitStatus(bitboards[r],f8);
+          break;
+          
+       case (c8):
+          popBitStatus(bitboards[r],a8);
+          setBitStatus(bitboards[r],d8);
+          break;
+     }
+   }
+   //updating castling rights 
+    castle &= castlingRights[sourceSquare];
+    castle &= castlingRights[targetSquare];
+    
+    //reset all the occupancies
+    memset(occupancies,0ULL,24);
+    
+    for(int bbPiece = P; bbPiece <= K; bbPiece++)
+       occupancies[white] |= bitboards[bbPiece];
+    
+    for(int bbPiece = p; bbPiece <= k; bbPiece++)
+       occupancies[black] |= bitboards[bbPiece];
+       
+     occupancies[both] |= occupancies[white];
+        occupancies[both] |= occupancies[black];
+        
+        //changing the side
+        side ^= 1;
+        
+        //making sure that the king hasn't been exposed to a check 
+        if(isSquareAttacked((side == white) ? getLsbBitIndex(bitboards[k]) : getLsbBitIndex(bitboards[K]),side))
+        {
+           takeBack();
+           
+           return 0;
+        }
+        else return 1;
+   }
+   else
+   {
+     if(getMoveCapture(move))
+       makeMove(move, allMoves);
+     else
+       return 0;
+   }
 }
 static inline void generateMoves(moves *moveList)
 {
@@ -1125,7 +1304,7 @@ static inline void generateMoves(moves *moveList)
                         {
                             
                             int targetEnpassant = getLsbBitIndex(enpassantAttacks);
-                            addMove(moveList, encodeMove(sourceSquare,targetSquare, piece, 0, 1, 0, 1, 0));
+                            addMove(moveList, encodeMove(sourceSquare,targetEnpassant, piece, 0, 1, 0, 1, 0));
                         }
                  }
                  popBitStatus(bitboard,sourceSquare);
@@ -1205,7 +1384,7 @@ static inline void generateMoves(moves *moveList)
                         {
                             
                             int targetEnpassant = getLsbBitIndex(enpassantAttacks);
-                            addMove(moveList, encodeMove(sourceSquare,targetSquare, piece, 0, 1, 0, 1, 0));
+                            addMove(moveList, encodeMove(sourceSquare,targetEnpassant, piece, 0, 1, 0, 1, 0));
                         }
                  }
                  popBitStatus(bitboard,sourceSquare);
@@ -1357,27 +1536,300 @@ static inline void generateMoves(moves *moveList)
          }
 }
 }
+int getTimeTaken()
+{
+    #ifdef WIN64
+        return GetTickCount();
+    #else
+        struct timeval timeValue;
+        gettimeofday(&timeValue, NULL);
+        return timeValue.tv_sec * 1000 + timeValue.tv_usec / 1000;
+    #endif
+    //returning the seconds + microseconds
+}
+long nodes;//indicates the number of positions reached
 
+// perft driver
+static inline void perftDriver(int depth)
+{
+    
+    if (depth == 0)
+    {
+        // increment nodes count (count reached positions)
+        nodes++;
+        return;
+    }
+    
+    moves moveList[1];
+    
+    generateMoves(moveList);
+    
+    for (int moveCount = 0; moveCount < moveList->count; moveCount++)
+    {   
+        copyBoard();
+        
+        if (!makeMove(moveList->moves[moveCount], allMoves))
+            continue;
+        
+        perftDriver(depth - 1);
+        
+        takeBack();
+    }
+}
+
+// perft test
+void perftTest(int depth)
+{
+    printf("\n     Performance test\n\n");
+    
+    moves moveList[1];
+    
+    generateMoves(moveList);
+    
+    long start = getTimeTaken();
+    
+    for (int moveCount = 0; moveCount < moveList->count; moveCount++)
+    {   
+        copyBoard();
+        
+        if (!makeMove(moveList->moves[moveCount], allMoves))
+            continue;
+        
+        long cummulativeNodes = nodes;
+      
+        perftDriver(depth - 1);
+        
+        long oldNodes = nodes - cummulativeNodes;
+        
+        takeBack();
+        
+        printf("     move: %s%s%c  nodes: %ld\n", squareToCoordinates[getMoveSource(moveList->moves[moveCount])],
+                                                 squareToCoordinates[getMoveTarget(moveList->moves[moveCount])],
+                                                 getMovePromoted(moveList->moves[moveCount]) ? promotedPieces[getMovePromoted(moveList->moves[moveCount])] : ' ',
+                                                 oldNodes);
+    }
+    
+    // print results
+    printf("\n    Depth: %d\n", depth);
+    printf("    Nodes: %ld\n", nodes);
+    printf("     Time: %ld\n\n", getTimeTaken() - start);
+}
+
+void searchPosition(int depth)
+{
+   printf("bestmove d2d4\n");
+}
+int parseMove(char *moveString)
+{
+    moves moveList[1];
+   
+    generateMoves(moveList);
+ 
+    int sourceSquare = (moveString[0] - 'a') + (8 - (moveString[1] - '0')) * 8;
+    
+    int targetSquare = (moveString[2] - 'a') + (8 - (moveString[3] - '0')) * 8;
+    
+    for (int moveCount = 0; moveCount < moveList->count; moveCount++)
+    {
+     
+        int move = moveList->moves[moveCount];
+        
+        if (sourceSquare == getMoveSource(move) && targetSquare == getMoveTarget(move))
+        {
+            int promotedPiece = getMovePromoted(move);
+            
+            if (promotedPiece)
+            {
+                
+                if ((promotedPiece == Q || promotedPiece == q) && moveString[4] == 'q')
+                    return move;
+                
+                else if ((promotedPiece == R || promotedPiece == r) && moveString[4] == 'r')
+                    return move;
+                
+                else if ((promotedPiece == B || promotedPiece == b) && moveString[4] == 'b')
+                    return move;
+               
+                else if ((promotedPiece == N || promotedPiece == n) && moveString[4] == 'n')
+                    return move;
+                
+                
+                continue;
+            }
+            
+            // return legal move
+            return move;
+        }
+    }
+    
+    // return illegal move
+    return 0;
+}
+/*
+    Example UCI commands to init position on chess board
+    
+    // init start position
+    position startpos
+    
+    // init start position and make the moves on chess board
+    position startpos moves e2e4 e7e5
+    
+    // init position from FEN string
+    position fen r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1 
+    
+    // init position from fen string and make moves on chess board
+    position fen r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1 moves e2a6 e8g8
+*/
+void parsePosition(char *command)
+{
+    command += 9;
+   
+    char *currentChar = command;
+    
+    if (strncmp(command, "startpos", 8) == 0)
+        parseFen(startPosition);
+    
+    else
+    {
+        currentChar = strstr(command, "fen");
+        
+        if (currentChar == NULL)
+            parseFen(startPosition);
+           
+        else
+        {
+            currentChar += 4;
+            
+            parseFen(currentChar);
+        }
+    }
+    currentChar = strstr(command, "moves");
+    
+    if (currentChar != NULL)
+    {
+        currentChar += 6;
+        
+        while(*currentChar)
+        {
+            int move = parseMove(currentChar);
+            
+            if (move == 0)
+                break;
+            
+            makeMove(move, allMoves);
+            
+            while (*currentChar && *currentChar != ' ') currentChar++;
+           
+            currentChar++;
+        }
+        
+        
+    }
+    printBoard();
+}
+void parseGo(char *command)
+{
+
+    int depth = -1;
+    
+    char *currentDepth = NULL;
+    
+    if (currentDepth = strstr(command, "depth"))
+        depth = atoi(currentDepth + 6);
+    else
+        depth = 6;
+    
+    searchPosition(depth);
+}
+void uciLoop()
+{
+   
+    setbuf(stdin, NULL);
+    setbuf(stdout, NULL);
+    
+    char input[2000];
+    
+    // print engine info
+    printf("id name mybbc\n");
+    printf("id author Sumit Singh Bora\n");
+    printf("uciok\n");
+    
+    // main loop
+    while (1)
+    {
+        // reset user /GUI input
+        memset(input, 0, sizeof(input));
+        
+        // make sure output reaches the GUI
+        fflush(stdout);
+        
+        // get user / GUI input
+        if (!fgets(input, 2000, stdin))
+            // continue the loop
+            continue;
+        
+        // make sure input is available
+        if (input[0] == '\n')
+            // continue the loop
+            continue;
+        
+        // parse UCI "isready" command
+        if (strncmp(input, "isready", 7) == 0)
+        {
+            printf("readyok\n");
+            continue;
+        }
+        
+        // parse UCI "position" command
+        else if (strncmp(input, "position", 8) == 0)
+            // call parse position function
+            parsePosition(input);
+        
+        // parse UCI "ucinewgame" command
+        else if (strncmp(input, "ucinewgame", 10) == 0)
+            // call parse position function
+            parsePosition("position startpos");
+        
+        // parse UCI "go" command
+        else if (strncmp(input, "go", 2) == 0)
+            // call parse go function
+            parseGo(input);
+        
+        // parse UCI "quit" command
+        else if (strncmp(input, "quit", 4) == 0)
+            // quit from the chess engine program execution
+            break;   
+        
+        // parse UCI "uci" command
+        else if (strncmp(input, "uci", 3) == 0)
+        {
+            // print engine info
+            printf("id name mybbc\n");
+            printf("id author Sumit Singh Bora\n");
+            printf("uciok\n");
+        }
+    }
+}
 int main()
 {
   
   initAll();
-  
-  parseFen(trickyPosition);
-  printBoard();
-  
-  
-   // create move list
-    moves moveList[1];
+  int debug = 0;
     
+   pos
+    if (debug)
+    {
+        // parse fen
+        parseFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1 ");
+        printBoard();
+        //printf("score: %d\n", evaluate());
+    }
     
-    
-    generateMoves(moveList);
-    
-    // print move list
-    printMoveList(moveList);
-  
-  
-  return 0; 
+    else
+        // connect to the GUI
+        uciLoop();
+
+ 
+ return 0; 
   
 }
