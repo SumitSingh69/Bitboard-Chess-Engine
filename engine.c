@@ -1022,11 +1022,11 @@ static inline void addMove(moves * moveList, int move)
 void printMove(int move)
 {
    if(getMovePromoted(move))
-   printf("%s%s%c\n", squareToCoordinates[getMoveSource(move)],
+   printf("%s%s%c", squareToCoordinates[getMoveSource(move)],
                      squareToCoordinates[getMoveTarget(move)],
                      promotedPieces[getMovePromoted(move)]);
    else
-     printf("%s%s \n",squareToCoordinates[getMoveSource(move)],
+     printf("%s%s",squareToCoordinates[getMoveSource(move)],
                      squareToCoordinates[getMoveTarget(move)]);
 }
 
@@ -1615,9 +1615,263 @@ void perftTest(int depth)
     printf("     Time: %ld\n\n", getTimeTaken() - start);
 }
 
+// material scrore
+
+/*
+    ♙ =   100   = ♙
+    ♘ =   300   = ♙ * 3
+    ♗ =   350   = ♙ * 3 + ♙ * 0.5
+    ♖ =   500   = ♙ * 5
+    ♕ =   1000  = ♙ * 10
+    ♔ =   10000 = ♙ * 100
+    
+*/
+
+int materialScore[12] = {
+    100,      // white pawn score
+    300,      // white knight scrore
+    350,      // white bishop score
+    500,      // white rook score
+   1000,      // white queen score
+  10000,      // white king score
+   -100,      // black pawn score
+   -300,      // black knight scrore
+   -350,      // black bishop score
+   -500,      // black rook score
+  -1000,      // black queen score
+ -10000,      // black king score
+};
+
+// pawn positional score
+const int pawnScore[64] = 
+{
+    90,  90,  90,  90,  90,  90,  90,  90,
+    30,  30,  30,  40,  40,  30,  30,  30,
+    20,  20,  20,  30,  30,  30,  20,  20,
+    10,  10,  10,  20,  20,  10,  10,  10,
+     5,   5,  10,  20,  20,   5,   5,   5,
+     0,   0,   0,   5,   5,   0,   0,   0,
+     0,   0,   0, -10, -10,   0,   0,   0,
+     0,   0,   0,   0,   0,   0,   0,   0
+};
+
+// knight positional score
+const int knightScore[64] = 
+{
+    -5,   0,   0,   0,   0,   0,   0,  -5,
+    -5,   0,   0,  10,  10,   0,   0,  -5,
+    -5,   5,  20,  20,  20,  20,   5,  -5,
+    -5,  10,  20,  30,  30,  20,  10,  -5,
+    -5,  10,  20,  30,  30,  20,  10,  -5,
+    -5,   5,  20,  10,  10,  20,   5,  -5,
+    -5,   0,   0,   0,   0,   0,   0,  -5,
+    -5, -10,   0,   0,   0,   0, -10,  -5
+};
+
+// bishop positional score
+const int bishopScore[64] = 
+{
+     0,   0,   0,   0,   0,   0,   0,   0,
+     0,   0,   0,   0,   0,   0,   0,   0,
+     0,   0,   0,  10,  10,   0,   0,   0,
+     0,   0,  10,  20,  20,  10,   0,   0,
+     0,   0,  10,  20,  20,  10,   0,   0,
+     0,  10,   0,   0,   0,   0,  10,   0,
+     0,  30,   0,   0,   0,   0,  30,   0,
+     0,   0, -10,   0,   0, -10,   0,   0
+
+};
+
+// rook positional score
+const int rookScore[64] =
+{
+    50,  50,  50,  50,  50,  50,  50,  50,
+    50,  50,  50,  50,  50,  50,  50,  50,
+     0,   0,  10,  20,  20,  10,   0,   0,
+     0,   0,  10,  20,  20,  10,   0,   0,
+     0,   0,  10,  20,  20,  10,   0,   0,
+     0,   0,  10,  20,  20,  10,   0,   0,
+     0,   0,  10,  20,  20,  10,   0,   0,
+     0,   0,   0,  20,  20,   0,   0,   0
+
+};
+
+// king positional score
+const int kingScore[64] = 
+{
+     0,   0,   0,   0,   0,   0,   0,   0,
+     0,   0,   5,   5,   5,   5,   0,   0,
+     0,   5,   5,  10,  10,   5,   5,   0,
+     0,   5,  10,  20,  20,  10,   5,   0,
+     0,   5,  10,  20,  20,  10,   5,   0,
+     0,   0,   5,  10,  10,   5,   0,   0,
+     0,   5,   5,  -5,  -5,   0,   5,   0,
+     0,   0,   5,   0, -15,   0,  10,   0
+};
+
+// mirror positional score tables for opposite side(black)
+const int mirrorScore[128] =
+{
+	a1, b1, c1, d1, e1, f1, g1, h1,
+	a2, b2, c2, d2, e2, f2, g2, h2,
+	a3, b3, c3, d3, e3, f3, g3, h3,
+	a4, b4, c4, d4, e4, f4, g4, h4,
+	a5, b5, c5, d5, e5, f5, g5, h5,
+	a6, b6, c6, d6, e6, f6, g6, h6,
+	a7, b7, c7, d7, e7, f7, g7, h7,
+	a8, b8, c8, d8, e8, f8, g8, h8
+};
+
+// position evaluation
+static inline int evaluate()
+{
+    int score = 0;
+    
+    U64 bitboard;
+ 
+    int piece, square;
+    
+    for (int bbPiece = P; bbPiece <= k; bbPiece++)
+    {
+        bitboard = bitboards[bbPiece];
+        
+        while (bitboard)
+        {
+            piece = bbPiece;
+           
+            square = getLsbBitIndex(bitboard);
+            
+            score += materialScore[piece];
+            
+            switch(piece)
+            {
+               case P : score += pawnScore[square]; break;
+               case N : score += knightScore[square]; break;
+               case B : score += bishopScore[square]; break;
+               case R : score += rookScore[square]; break;
+               case K : score += kingScore[square]; break;
+               
+               case p : score -= pawnScore[mirrorScore[square]];break;
+               case n : score -= knightScore[mirrorScore[square]];break;
+               case b : score -= bishopScore[mirrorScore[square]];break;
+               case r : score -= rookScore[mirrorScore[square]];break;
+               case k : score -= kingScore[mirrorScore[square]];break;
+               
+            }
+            
+            popBitStatus(bitboard, square);
+        }
+    }
+    
+    return (side == white) ? score : -score;
+}
+
+// half move counter
+int ply;
+
+// best move
+int bestMove;
+
+// negamax alpha beta search
+static inline int negamax(int alpha, int beta, int depth)
+{
+    // recurrsion escapre condition
+    if (depth == 0)
+        // return evaluation
+        return evaluate();
+    
+    // increment nodes count
+    nodes++;
+    
+    int isCheck = isSquareAttacked((side == white) ? getLsbBitIndex(bitboards[K]) : getLsbBitIndex(bitboards[k], side ^ 1);
+    
+    int legalMoves = 0;
+    
+    // best move so far
+    int bestSofar;
+    
+    // old value of alpha
+    int oldAlpha = alpha;
+    
+    // create move list instance
+    moves moveList[1];
+    
+    // generate moves
+    generateMoves(moveList);
+    
+    // loop over moves within a movelist
+    for (int count = 0; count < moveList->count; count++)
+    {
+        // preserve board state
+        copyBoard();
+        
+        // increment ply
+        ply++;
+        
+        // make sure to make only legal moves
+        if (makeMove(moveList->moves[count], allMoves) == 0)
+        {
+            // decrement ply
+            ply--;
+            
+            // skip to next move
+            continue;
+        }
+        
+        legalMoves++;
+        // score current move
+        int score = -negamax(-beta, -alpha, depth - 1);
+        
+        // decrement ply
+        ply--;
+
+        // take move back
+        takeBack();
+        
+        // fail-hard beta cutoff
+        if (score >= beta)
+        {
+            // node (move) fails high
+            return beta;
+        }
+        
+        // found a better move
+        if (score > alpha)
+        {
+            // PV node (move)
+            alpha = score;
+            
+            // if root move
+            if (ply == 0)
+                // associate best move with the best score
+                bestSofar = moveList->moves[count];
+        }
+    }
+    if(legalMoves == 0)
+    {
+      if(inCheck) return -49000 + ply;
+      else return 0;
+    }
+    // found better move
+    if (oldAlpha != alpha)
+        // init best move
+        bestMove = bestSofar;
+    
+    // node (move) fails low
+    return alpha;
+}
 void searchPosition(int depth)
 {
-   printf("bestmove d2d4\n");
+   
+    int score = negamax(-50000, 50000, depth);
+    if(bestMove)
+    {
+    
+    printf("info score cp %d depth %d nodes %ld\n",score,depth,nodes);
+    printf("bestmove ");
+    printMove(bestMove);
+    printf("\n");
+    }
 }
 int parseMove(char *moveString)
 {
@@ -1814,15 +2068,15 @@ int main()
 {
   
   initAll();
-  int debug = 0;
+  int debug = 1;
     
-   pos
+   
     if (debug)
     {
         // parse fen
-        parseFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1 ");
+        parseFen(startPosition);
         printBoard();
-        //printf("score: %d\n", evaluate());
+        searchPosition(5);
     }
     
     else
