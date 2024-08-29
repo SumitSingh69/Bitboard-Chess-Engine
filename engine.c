@@ -1766,11 +1766,71 @@ static inline int evaluate()
     return (side == white) ? score : -score;
 }
 
+// most valuable victim & less valuable attacker
+
+/*
+                          
+    (Victims) Pawn Knight Bishop   Rook  Queen   King
+  (Attackers)
+        Pawn   105    205    305    405    505    605
+      Knight   104    204    304    404    504    604
+      Bishop   103    203    303    403    503    603
+        Rook   102    202    302    402    502    602
+       Queen   101    201    301    401    501    601
+        King   100    200    300    400    500    600
+
+*/
+
+// MVV LVA [attacker][victim]
+static int mvvLva[12][12] = {
+ 	105, 205, 305, 405, 505, 605,  105, 205, 305, 405, 505, 605,
+	104, 204, 304, 404, 504, 604,  104, 204, 304, 404, 504, 604,
+	103, 203, 303, 403, 503, 603,  103, 203, 303, 403, 503, 603,
+	102, 202, 302, 402, 502, 602,  102, 202, 302, 402, 502, 602,
+	101, 201, 301, 401, 501, 601,  101, 201, 301, 401, 501, 601,
+	100, 200, 300, 400, 500, 600,  100, 200, 300, 400, 500, 600,
+
+	105, 205, 305, 405, 505, 605,  105, 205, 305, 405, 505, 605,
+	104, 204, 304, 404, 504, 604,  104, 204, 304, 404, 504, 604,
+	103, 203, 303, 403, 503, 603,  103, 203, 303, 403, 503, 603,
+	102, 202, 302, 402, 502, 602,  102, 202, 302, 402, 502, 602,
+	101, 201, 301, 401, 501, 601,  101, 201, 301, 401, 501, 601,
+	100, 200, 300, 400, 500, 600,  100, 200, 300, 400, 500, 600
+};
 // half move counter
 int ply;
 
 // best move
 int bestMove;
+static inline int quiescence(int alpha, int beta)
+{
+   nodes++;
+   int evaluation = evaluate();
+   
+   if(evaluation >= beta) return beta;
+   
+   if(evaluation > alpha) alpha = evaluation;
+   
+   moves moveList[1];
+   
+   generateMoves(moveList);
+   for(int count = 0; count < moveList -> count; count++)
+   {
+      copyBoard();
+      ply++;
+      if(makeMove(moveList -> moves[count], onlyCaptures) == 0)
+      {
+        ply--;
+        continue;
+      }
+      int score = -quiescence(-beta, -alpha);
+      ply--;
+      takeBack();
+      
+      if(score >= beta) alpha = score;
+   }
+   return alpha;
+}
 
 // negamax alpha beta search
 static inline int negamax(int alpha, int beta, int depth)
@@ -1778,12 +1838,12 @@ static inline int negamax(int alpha, int beta, int depth)
     // recurrsion escapre condition
     if (depth == 0)
         // return evaluation
-        return evaluate();
+        return quiescence(alpha, beta);
     
     // increment nodes count
     nodes++;
     
-    int isCheck = isSquareAttacked((side == white) ? getLsbBitIndex(bitboards[K]) : getLsbBitIndex(bitboards[k], side ^ 1);
+    int inCheck = isSquareAttacked((side == white) ? getLsbBitIndex(bitboards[K]) : getLsbBitIndex(bitboards[k]), side ^ 1);
     
     int legalMoves = 0;
     
@@ -2076,7 +2136,20 @@ int main()
         // parse fen
         parseFen(startPosition);
         printBoard();
-        searchPosition(5);
+     //   searchPosition(2);
+      printf("move score P x k: %d\n", mvvLva[P][k]);
+        printf("move score P x q: %d\n", mvvLva[P][q]);
+        printf("move score P x r: %d\n", mvvLva[P][r]);
+        printf("move score P x b: %d\n", mvvLva[P][b]);
+        printf("move score P x n: %d\n", mvvLva[P][n]);
+        printf("move score P x p: %d\n", mvvLva[P][p]);
+        
+        printf("move score N x k: %d\n", mvvLva[N][k]);
+        printf("move score N x q: %d\n", mvvLva[N][q]);
+        printf("move score N x r: %d\n", mvvLva[N][r]);
+        printf("move score N x b: %d\n", mvvLva[N][b]);
+        printf("move score N x n: %d\n", mvvLva[N][n]);
+        printf("move score N x p: %d\n", mvvLva[N][p]);
     }
     
     else
